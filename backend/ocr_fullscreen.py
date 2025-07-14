@@ -9,6 +9,11 @@ import win32ui
 import win32con
 import win32api
 from PIL import Image
+import threading
+import time
+import hashlib
+
+from ocrstore import OcrStore
 
 # Configure Tesseract path for Windows
 tesseract_paths = [
@@ -17,12 +22,14 @@ tesseract_paths = [
 	r'C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'.format(os.getenv('USERNAME'))
 ]
 
+v_OcrStore = OcrStore()
+
 for path in tesseract_paths:
 	if os.path.exists(path):
 		pytesseract.pytesseract.tesseract_cmd = path
 		break
-else:
-	print("Warning: Tesseract not found in common locations. Please install Tesseract OCR or add it to your PATH.")
+	else:
+		pass
 
 
 def list_all_windows():
@@ -39,10 +46,6 @@ def list_all_windows():
 	
 	windows = []
 	win32gui.EnumWindows(enum_windows_callback, windows)
-	
-	print("Available windows:")
-	for i, title in enumerate(windows, 1):
-		print(f"{i}: {title}")
 	
 	return windows
 
@@ -75,7 +78,6 @@ def capture_window_by_title(window_title):
 	"""
 	hwnd = find_window_by_title(window_title)
 	if not hwnd:
-		print(f"Window containing '{window_title}' not found.")
 		return None
 
 	# Bring the window to the foreground. This can sometimes help with capture issues.
@@ -87,7 +89,6 @@ def capture_window_by_title(window_title):
 	# Check if window is minimized
 	placement = win32gui.GetWindowPlacement(hwnd)
 	if placement[1] == win32con.SW_SHOWMINIMIZED:
-		print(f"Window '{window_title}' is minimized. Please restore it and try again.")
 		return None
 
 	# Get window rectangle
@@ -95,10 +96,8 @@ def capture_window_by_title(window_title):
 	x, y, x1, y1 = rect
 	width = x1 - x
 	height = y1 - y
-	print(f"Window '{window_title}' rect: {rect} (width={width}, height={height})")
 
 	if width <= 0 or height <= 0:
-		print(f"Window '{window_title}' has invalid size (maybe hidden or closed).")
 		return None
 
 	# --- Method 1: Try PrintWindow first ---
@@ -132,10 +131,8 @@ def capture_window_by_title(window_title):
 			mfcDC.DeleteDC()
 			win32gui.ReleaseDC(hwnd, hwndDC)
 			
-			print(f"Successfully captured using PrintWindow")
 			return img
 		else:
-			print("PrintWindow failed (result=0), trying robust ImageGrab fallback.")
 			# Cleanup before trying next method
 			win32gui.DeleteObject(saveBitMap.GetHandle())
 			saveDC.DeleteDC()
@@ -143,12 +140,11 @@ def capture_window_by_title(window_title):
 			win32gui.ReleaseDC(hwnd, hwndDC)
 			
 	except Exception as e:
-		print(f"PrintWindow method raised an exception: {e}. Trying robust ImageGrab fallback.")
+		pass
 
 	# --- Method 2: Robust ImageGrab (all_screens=True) Fallback ---
 	# This is the most reliable method for multi-monitor setups when PrintWindow fails.
 	try:
-		print("Trying robust ImageGrab (all_screens) method...")
 		
 		# Get the coordinates of the entire virtual screen
 		v_screen_left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
@@ -167,16 +163,14 @@ def capture_window_by_title(window_title):
 		# Crop the image to the window's bounding box
 		img = full_screenshot.crop((crop_left, crop_top, crop_right, crop_bottom))
 
-		print(f"ImageGrab (all_screens) captured image size: {img.size}")
 		return img
 	except Exception as e:
-		print(f"Robust ImageGrab (all_screens) failed: {e}. Trying BitBlt as a last resort.")
+		pass
 
 
 	# --- Method 3: BitBlt (Last Resort) ---
 	# This is the least reliable, especially for off-screen or occluded windows.
 	try:
-		print("Trying BitBlt method...")
 		hwndDC = win32gui.GetWindowDC(hwnd)
 		mfcDC = win32ui.CreateDCFromHandle(hwndDC)
 		saveDC = mfcDC.CreateCompatibleDC()
@@ -198,10 +192,8 @@ def capture_window_by_title(window_title):
 		mfcDC.DeleteDC()
 		win32gui.ReleaseDC(hwnd, hwndDC)
 
-		print(f"BitBlt captured image size: {img.size}")
 		return img
 	except Exception as e2:
-		print(f"BitBlt method also failed: {e2}")
 		return None
 
 def capture_and_ocr_window(window_title):
@@ -218,33 +210,91 @@ def capture_and_ocr_window(window_title):
 	start_time = time.time()
 	text = pytesseract.image_to_string(img)
 	elapsed = time.time() - start_time
-	print(f"OCR took {elapsed:.3f} seconds.")
 
 	# Copy the recognized text to clipboard
 	pyperclip.copy(text)
 
 	return text
 
+def get_image_hash(img):
+	"""
+	Calculate hash of an image for comparison.
+	"""
+	if img is None:
+		return None
+	# Convert to bytes for hashing
+	img_bytes = img.tobytes()
+	return hashlib.md5(img_bytes).hexdigest()
+
+def periodic_caption_capture():
+	"""
+	Thread function that captures caption windows every 500ms.
+	Performs OCR only when the image changes.
+	"""
+	last_hash = None
+	
+	while True:
+		try:
+			# Check for caption windows in priority order
+			google_caption_window = find_window_by_title("Live Caption")
+			windows_caption_window = find_window_by_title("Live Captions")
+			
+			target_window = None
+			if google_caption_window:
+				target_window = "Live Caption"
+			elif windows_caption_window:
+				target_window = "Live Captions"
+			
+			if target_window:
+				# Capture the window
+				img = capture_window_by_title(target_window)
+				if img:
+					# Calculate hash of current image
+					current_hash = get_image_hash(img)
+					
+					# Only perform OCR if image has changed
+					if current_hash != last_hash:
+						
+						# Measure OCR time
+						start_time = time.time()
+						text = pytesseract.image_to_string(img)
+						elapsed = time.time() - start_time
+						
+						# Print the result
+						if text.strip():
+							# Copy to clipboard
+							pyperclip.copy(text)
+							v_OcrStore.add_ocr_data(text.strip())
+							print(text)
+							print(v_OcrStore.get_ocr_data())
+						else:
+							pass
+
+						last_hash = current_hash
+			else:
+				# No caption window found, reset hash
+				last_hash = None
+		
+		except Exception as e:
+			pass
+
+		# Wait 500ms before next capture
+		time.sleep(0.5)
+
 if __name__ == "__main__":
 	import sys
 
-	google_caption_window = find_window_by_title("Live Caption")
-	windows_caption_window = find_window_by_title("Live Captions")
-
-	print("Available windows:")
-
-	result = ""
-	if google_caption_window:
-		result = capture_and_ocr_window("Live Caption")
-	elif windows_caption_window:
-		result = capture_and_ocr_window("Live Captions")
-
-	if result is not None:
-		print(f"OCR result from 'Live Captions' window copied to clipboard:")
-		if result.strip():
-			print(result)
-		else:
-			print("(No text detected in the window)")
-	else:
-		print(f"Window containing 'Live Captions' not found.")
-		print("Use --list to see all available windows.")
+	# Start the periodic capture thread
+	capture_thread = threading.Thread(target=periodic_caption_capture, daemon=True)
+	capture_thread.start()
+	
+	print("Starting periodic caption capture (500ms intervals)...")
+	print("Press Ctrl+C to stop")
+	
+	try:
+		# Keep the main thread alive
+		while True:
+			time.sleep(1)
+	except KeyboardInterrupt:
+		print("\nStopping caption capture...")
+		sys.exit(0)
