@@ -140,46 +140,26 @@ def capture_and_ocr_window(window_title):
 	
 	return text
 
-
-def capture_and_ocr_fullscreen():
-	"""
-	Capture fullscreen screenshot and perform OCR on Windows.
-	Returns the extracted text and copies it to clipboard.
-	"""
-	# Capture screenshot directly to memory (no file I/O)
-	img = ImageGrab.grab()
-	
-	# Perform OCR directly on the image in memory
-	text = pytesseract.image_to_string(img)
-	
-	# Copy the recognized text to clipboard
-	pyperclip.copy(text)
-	
-	return text
-
 if __name__ == "__main__":
 	import sys
-	
-	if len(sys.argv) > 1:
-		if sys.argv[1] == "--list":
-			# List all available windows
-			list_all_windows()
+
+	google_caption_window = find_window_by_title("Live Caption")
+	windows_caption_window = find_window_by_title("Live Captions")
+
+	print("Available windows:")
+
+	result = ""
+	if google_caption_window:
+		result = capture_and_ocr_window("Live Caption")
+	elif windows_caption_window:
+		result = capture_and_ocr_window("Live Captions")
+
+	if result is not None:
+		print(f"OCR result from 'Live Captions' window copied to clipboard:")
+		if result.strip():
+			print(result)
 		else:
-			# If window title is provided as argument, capture that specific window
-			window_title = " ".join(sys.argv[1:])
-			print(f"Looking for window containing: '{window_title}'")
-			result = capture_and_ocr_window(window_title)
-			if result is not None:  # Changed from "if result:" to handle empty strings
-				print(f"OCR result from '{window_title}' window copied to clipboard:")
-				if result.strip():
-					print(result)
-				else:
-					print("(No text detected in the window)")
-			else:
-				print(f"Window containing '{window_title}' not found.")
-				print("Use --list to see all available windows.")
+			print("(No text detected in the window)")
 	else:
-		# Default: capture fullscreen
-		result = capture_and_ocr_fullscreen()
-		print("Fullscreen OCR result copied to clipboard:")
-		print(result)
+		print(f"Window containing 'Live Captions' not found.")
+		print("Use --list to see all available windows.")
