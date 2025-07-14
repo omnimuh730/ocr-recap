@@ -3,79 +3,183 @@
 import pytesseract
 import pyperclip
 import os
-import sys
-import platform
-
-try:
-    from PIL import ImageGrab
-except ImportError:
-    ImageGrab = None
+from PIL import ImageGrab
+import win32gui
+import win32ui
+import win32con
 from PIL import Image
-import subprocess
 
 # Configure Tesseract path for Windows
-if platform.system() == 'Windows':
-    # Common Tesseract installation paths on Windows
-    tesseract_paths = [
-        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
-        r'C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'.format(os.getenv('USERNAME'))
-    ]
+tesseract_paths = [
+    r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+    r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+    r'C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'.format(os.getenv('USERNAME'))
+]
+
+for path in tesseract_paths:
+    if os.path.exists(path):
+        pytesseract.pytesseract.tesseract_cmd = path
+        break
+else:
+    print("Warning: Tesseract not found in common locations. Please install Tesseract OCR or add it to your PATH.")
+
+
+def list_all_windows():
+    """
+    List all visible windows with their titles.
+    Useful for finding the exact window name to capture.
+    """
+    def enum_windows_callback(hwnd, windows):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title.strip():  # Only show windows with titles
+                windows.append(title)
+        return True
     
-    for path in tesseract_paths:
-        if os.path.exists(path):
-            pytesseract.pytesseract.tesseract_cmd = path
-            break
-    else:
-        print("Warning: Tesseract not found in common locations. Please install Tesseract OCR or add it to your PATH.")
+    windows = []
+    win32gui.EnumWindows(enum_windows_callback, windows)
+    
+    print("Available windows:")
+    for i, title in enumerate(windows, 1):
+        print(f"{i}: {title}")
+    
+    return windows
+
+
+def find_window_by_title(window_title):
+    """
+    Find a window by its title (or partial title).
+    Returns the window handle (hwnd) if found, None otherwise.
+    """
+    def enum_windows_callback(hwnd, windows):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if window_title.lower() in title.lower():
+                windows.append((hwnd, title))
+        return True
+    
+    windows = []
+    win32gui.EnumWindows(enum_windows_callback, windows)
+    
+    if windows:
+        # If multiple windows found, return the first one
+        return windows[0][0]  # Return hwnd
+    return None
+
+
+def capture_window_by_title(window_title):
+    """
+    Capture a specific window by its title.
+    Returns PIL Image of the window or None if not found.
+    """
+    hwnd = find_window_by_title(window_title)
+    if not hwnd:
+        return None
+    
+    # Get window rectangle
+    rect = win32gui.GetWindowRect(hwnd)
+    x, y, x1, y1 = rect
+    width = x1 - x
+    height = y1 - y
+    
+    if width <= 0 or height <= 0:
+        return None
+    
+    try:
+        # Use ImageGrab with the window region - this works best for most windows
+        img = ImageGrab.grab(bbox=(x, y, x1, y1))
+        return img
+        
+    except Exception as e:
+        # Fallback to Win32 API approach if ImageGrab fails
+        try:
+            hwndDC = win32gui.GetWindowDC(hwnd)
+            mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+            saveDC = mfcDC.CreateCompatibleDC()
+            
+            saveBitMap = win32ui.CreateBitmap()
+            saveBitMap.CreateCompatibleBitmap(mfcDC, width, height)
+            saveDC.SelectObject(saveBitMap)
+            
+            saveDC.BitBlt((0, 0), (width, height), mfcDC, (0, 0), win32con.SRCCOPY)
+            
+            bmpinfo = saveBitMap.GetInfo()
+            bmpstr = saveBitMap.GetBitmapBits(True)
+            img = Image.frombuffer(
+                'RGB',
+                (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
+                bmpstr, 'raw', 'BGRX', 0, 1
+            )
+            
+            # Cleanup
+            win32gui.DeleteObject(saveBitMap.GetHandle())
+            saveDC.DeleteDC()
+            mfcDC.DeleteDC()
+            win32gui.ReleaseDC(hwnd, hwndDC)
+            
+            return img
+            
+        except Exception:
+            return None
+
+
+def capture_and_ocr_window(window_title):
+    """
+    Capture a specific window and perform OCR on it.
+    Returns the extracted text and copies it to clipboard.
+    """
+    img = capture_window_by_title(window_title)
+    if not img:
+        return None
+    
+    # Perform OCR directly on the image in memory
+    text = pytesseract.image_to_string(img)
+    
+    # Copy the recognized text to clipboard
+    pyperclip.copy(text)
+    
+    return text
 
 
 def capture_and_ocr_fullscreen():
-    img = None
-    # Use appropriate temp directory for the platform
-    if platform.system() == 'Windows':
-        temp_dir = os.environ.get('TEMP', os.environ.get('TMP', 'C:\\temp'))
-        screenshot_path = os.path.join(temp_dir, 'ocr_fullscreen_screenshot.png')
-        xwd_path = os.path.join(temp_dir, 'ocr_fullscreen.xwd')
-    else:
-        screenshot_path = '/tmp/ocr_fullscreen_screenshot.png'
-        xwd_path = '/tmp/ocr_fullscreen.xwd'
+    """
+    Capture fullscreen screenshot and perform OCR on Windows.
+    Returns the extracted text and copies it to clipboard.
+    """
+    # Capture screenshot directly to memory (no file I/O)
+    img = ImageGrab.grab()
     
-    # Try ImageGrab (works on Windows and some Linux/macOS with GUI)
-    if ImageGrab is not None:
-        try:
-            img = ImageGrab.grab()
-        except Exception:
-            img = None
-    # Try scrot if ImageGrab failed and on Linux
-    if img is None and platform.system() == 'Linux':
-        try:
-            subprocess.run(['scrot', screenshot_path], check=True)
-            img = Image.open(screenshot_path)
-        except Exception:
-            img = None
-    # Try xwd (X Window Dump) as a last resort on Linux
-    if img is None and platform.system() == 'Linux':
-        try:
-            subprocess.run(['xwd', '-root', '-out', xwd_path], check=True)
-            subprocess.run(['convert', xwd_path, screenshot_path], check=True)
-            img = Image.open(screenshot_path)
-        except Exception:
-            img = None
-    if img is None:
-        raise RuntimeError('Failed to capture the screen. No supported method found. Ensure you are running in a desktop environment or try on Windows.')
-    # Perform OCR using pytesseract
+    # Perform OCR directly on the image in memory
     text = pytesseract.image_to_string(img)
+    
     # Copy the recognized text to clipboard
     pyperclip.copy(text)
-    # Clean up the screenshot file if it was created
-    if os.path.exists(screenshot_path):
-        os.remove(screenshot_path)
-    if os.path.exists(xwd_path):
-        os.remove(xwd_path)
+    
     return text
 
 if __name__ == "__main__":
-    result = capture_and_ocr_fullscreen()
-    print("Recognized text copied to clipboard:")
-    print(result)
+    import sys
+    
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--list":
+            # List all available windows
+            list_all_windows()
+        else:
+            # If window title is provided as argument, capture that specific window
+            window_title = " ".join(sys.argv[1:])
+            print(f"Looking for window containing: '{window_title}'")
+            result = capture_and_ocr_window(window_title)
+            if result is not None:  # Changed from "if result:" to handle empty strings
+                print(f"OCR result from '{window_title}' window copied to clipboard:")
+                if result.strip():
+                    print(result)
+                else:
+                    print("(No text detected in the window)")
+            else:
+                print(f"Window containing '{window_title}' not found.")
+                print("Use --list to see all available windows.")
+    else:
+        # Default: capture fullscreen
+        result = capture_and_ocr_fullscreen()
+        print("Fullscreen OCR result copied to clipboard:")
+        print(result)
