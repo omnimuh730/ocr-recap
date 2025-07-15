@@ -1,5 +1,3 @@
-
-
 import pytesseract
 import pyperclip
 import os
@@ -12,6 +10,7 @@ from PIL import Image
 import threading
 import time
 import hashlib
+import keyboard
 
 from ocrstore import OcrStore
 
@@ -265,14 +264,11 @@ def periodic_caption_capture():
 							v_OcrStore.add_ocr_data(text.strip())
 							
 							# looping print all ocr store data line by line
-							print(f"OCR Result (elapsed: {elapsed:.2f}s):")
 
 							v_OcrStore.rearrange_sentences()
        
 							# Copy all sentences(not ocrdata) to clipboard
 							pyperclip.copy("\n".join(v_OcrStore.get_ocr_sentences()))
-							for sentence in v_OcrStore.get_ocr_sentences():
-								print(f"- {sentence}")
 						else:
 							pass
 
@@ -287,6 +283,179 @@ def periodic_caption_capture():
 		# Wait 500ms before next capture
 		time.sleep(0.5)
 
+def perform_paste_sequence(sentences_to_paste):
+	"""
+	Perform the key sequence: Ctrl+A, Delete, Ctrl+V
+	This will select all text, delete it, and paste the specified sentences.
+	"""
+	try:
+		# Copy the sentences to clipboard first
+		if sentences_to_paste:
+			pyperclip.copy("\n".join(sentences_to_paste))
+		else:
+			pyperclip.copy("")
+		
+		# Small delay to ensure the hotkey is released
+		time.sleep(0.1)
+		
+		# Ctrl+A (Select All)
+		keyboard.send('ctrl+a')
+		time.sleep(0.05)  # Small delay between operations
+		
+		# Delete key
+		keyboard.send('delete')
+		time.sleep(0.05)
+		
+		# Ctrl+V (Paste)
+		keyboard.send('ctrl+v')
+		
+	except Exception as e:
+		pass
+
+def get_last_n_sentences(n):
+	"""
+	Get the last n sentences from the OCR store.
+	"""
+	sentences = v_OcrStore.get_ocr_sentences()
+	if not sentences:
+		return []
+	return sentences[-n:] if len(sentences) >= n else sentences
+
+def clear_all_data():
+	"""
+	Clear all OCR data and sentences.
+	"""
+	global v_OcrStore
+	v_OcrStore.ocr_data = []
+	v_OcrStore.ocr_sentences = []
+
+# Global variable to track decimal key presses
+decimal_press_count = 0
+
+def reset_decimal_counter():
+	"""Reset the decimal press counter when any other key is pressed"""
+	global decimal_press_count
+	decimal_press_count = 0
+
+def setup_hotkeys():
+	"""
+	Set up hotkey listeners for numpad keys.
+	- Numpad 1-9: Copy last 2,4,6,8...18 sentences respectively
+	- Numpad 0: Copy all sentences
+	- Numpad . (double press): Clear all data
+	"""
+	
+	def on_numpad_1():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(2)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_2():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(4)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_3():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(6)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_4():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(8)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_5():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(10)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_6():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(12)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_7():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(14)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_8():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(16)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_9():
+		reset_decimal_counter()
+		sentences = get_last_n_sentences(18)
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_0():
+		reset_decimal_counter()
+		sentences = v_OcrStore.get_ocr_sentences()
+		perform_paste_sequence(sentences)
+	
+	def on_numpad_decimal():
+		global decimal_press_count, decimal_last_press_time
+		
+		decimal_press_count += 1
+		
+		if decimal_press_count == 1:
+			pass
+		elif decimal_press_count == 2:
+			clear_all_data()
+			decimal_press_count = 0  # Reset counter after clearing
+		else:
+			# This shouldn't happen with sequential presses, but just in case
+			decimal_press_count = 0
+	
+	# Set up hotkeys with suppression (suppress=True prevents the key from being typed)
+	hotkey_mappings = [
+		('num 1', on_numpad_1),
+		('num 2', on_numpad_2),
+		('num 3', on_numpad_3),
+		('num 4', on_numpad_4),
+		('num 5', on_numpad_5),
+		('num 6', on_numpad_6),
+		('num 7', on_numpad_7),
+		('num 8', on_numpad_8),
+		('num 9', on_numpad_9),
+		('num 0', on_numpad_0),
+	]
+	
+	# Try different possible names for numpad decimal
+	decimal_key_names = ['num .', 'num del', 'decimal', 'num decimal', 'keypad .', 'kp_decimal']
+	
+	for key, callback in hotkey_mappings:
+		try:
+			keyboard.add_hotkey(key, callback, suppress=True)
+		except Exception as e:
+			pass
+
+	# Try to register numpad decimal with different names
+	decimal_registered = False
+	for key_name in decimal_key_names:
+		try:
+			keyboard.add_hotkey(key_name, on_numpad_decimal, suppress=True)
+			decimal_registered = True
+			break
+		except Exception as e:
+			pass
+
+	if not decimal_registered:
+		# Alternative approach using keyboard hook
+		try:
+			def on_key_event(event):
+				if event.event_type == keyboard.KEY_DOWN:
+					if event.name in ['decimal', '.', 'num .', 'kp_decimal']:
+						on_numpad_decimal()
+						return False  # Suppress the key
+				return True
+			
+			keyboard.hook(on_key_event)
+		except Exception as e:
+			pass
+
 if __name__ == "__main__":
 	import sys
 
@@ -294,13 +463,12 @@ if __name__ == "__main__":
 	capture_thread = threading.Thread(target=periodic_caption_capture, daemon=True)
 	capture_thread.start()
 	
-	print("Starting periodic caption capture (500ms intervals)...")
-	print("Press Ctrl+C to stop")
+	# Set up hotkeys
+	setup_hotkeys()
 	
 	try:
 		# Keep the main thread alive
 		while True:
 			time.sleep(1)
 	except KeyboardInterrupt:
-		print("\nStopping caption capture...")
 		sys.exit(0)
