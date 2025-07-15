@@ -262,11 +262,14 @@ def periodic_caption_capture():
 						
 						# Print the result
 						if text.strip():
-							# Copy to clipboard
-							pyperclip.copy(text)
 							v_OcrStore.add_ocr_data(text.strip())
-							print(text)
-							print(v_OcrStore.get_ocr_data())
+							
+							# looping print all ocr store data line by line
+							print(f"OCR Result (elapsed: {elapsed:.2f}s):")
+							for line in v_OcrStore.get_ocr_data():
+								print(line)
+							# Copy all OCR data to clipboard
+							pyperclip.copy("\n".join(v_OcrStore.get_ocr_data()))
 						else:
 							pass
 
