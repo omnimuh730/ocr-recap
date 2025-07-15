@@ -7,7 +7,7 @@ This class is for handling and management string data from OCR operations.
 class OcrStore:
 	def __init__(self):
 		self.ocr_data = []
-		self.ocr_sentences = {}
+		self.ocr_sentences = []
 
 	def is_similar(self, text1, text2):
 		if text1 is None or text2 is None:
@@ -103,3 +103,88 @@ class OcrStore:
 		Return the stored OCR data.
 		"""
 		return self.ocr_data
+	def get_ocr_sentences(self):
+		"""
+		Return the stored OCR sentences.
+		"""
+		return self.ocr_sentences
+	def rearrange_sentences(self):
+		"""
+		Rearrange sentences in ocr_data to form complete sentences.
+		This modifies ocr_sentences based on ocr_data by properly splitting text into sentences.
+		"""
+		if not self.ocr_data:
+			return
+		
+		# Join all lines into a single text block
+		full_text = " ".join(line.strip() for line in self.ocr_data if line.strip())
+		
+		if not full_text:
+			self.ocr_sentences = []
+			return
+		
+		# Split into sentences using a more sophisticated approach
+		self.ocr_sentences = self._split_into_sentences(full_text)
+	
+	def _split_into_sentences(self, text):
+		"""
+		Split text into sentences using a more robust approach.
+		Handles multiple sentences per line and common abbreviations.
+		"""
+		import re
+		
+		# Common abbreviations that shouldn't trigger sentence breaks
+		abbreviations = {
+			'Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Sr.', 'Jr.',
+			'Inc.', 'Ltd.', 'Co.', 'Corp.', 'etc.', 'vs.', 'e.g.',
+			'i.e.', 'U.S.', 'U.K.', 'U.N.', 'No.', 'St.', 'Ave.',
+			'Blvd.', 'Rd.', 'Dept.', 'Gov.', 'Rep.', 'Sen.'
+		}
+		
+		# Replace abbreviations with placeholders to avoid false sentence breaks
+		placeholder_map = {}
+		for i, abbr in enumerate(abbreviations):
+			placeholder = f"__ABBR_{i}__"
+			if abbr in text:
+				text = text.replace(abbr, placeholder)
+				placeholder_map[placeholder] = abbr
+		
+		# Split on sentence-ending punctuation followed by whitespace and capital letter
+		# This regex looks for:
+		# - Sentence ending punctuation (. ! ?)
+		# - Followed by one or more whitespace characters
+		# - Followed by a capital letter or digit
+		sentence_pattern = r'([.!?])\s+(?=[A-Z0-9])'
+		
+		# Split the text
+		parts = re.split(sentence_pattern, text)
+		
+		sentences = []
+		current_sentence = ""
+		
+		for i, part in enumerate(parts):
+			if part in '.!?':
+				# This is punctuation, add it to current sentence
+				current_sentence += part
+				# Add the complete sentence
+				if current_sentence.strip():
+					sentences.append(current_sentence.strip())
+				current_sentence = ""
+			else:
+				# This is text content
+				current_sentence += part
+		
+		# Add any remaining text as a sentence
+		if current_sentence.strip():
+			sentences.append(current_sentence.strip())
+		
+		# Restore abbreviations from placeholders
+		for i, sentence in enumerate(sentences):
+			for placeholder, abbr in placeholder_map.items():
+				sentence = sentence.replace(placeholder, abbr)
+			sentences[i] = sentence
+		
+		# Filter out empty sentences and clean up
+		sentences = [s.strip() for s in sentences if s.strip()]
+		
+		return sentences
