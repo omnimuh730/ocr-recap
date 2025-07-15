@@ -281,7 +281,7 @@ def periodic_caption_capture():
 			pass
 
 		# Wait 500ms before next capture
-		time.sleep(0.5)
+		time.sleep(0.3)
 
 def perform_paste_sequence(sentences_to_paste):
 	"""
